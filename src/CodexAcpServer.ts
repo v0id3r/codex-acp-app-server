@@ -5057,7 +5057,7 @@ export class CodexAcpServer {
                     void reservation.wait.then(() => reservation.release());
                     return {messageId};
                 }
-                if (reservation.needsWait && await this.steerOrWaitForV2Prompt(request, messageId, reservation, promptKind.kind === "prompt", waiting)) {
+                if (reservation.needsWait && await this.steerOrWaitForV2Prompt(request, messageId, reservation, canSteerV2Prompt(request, promptKind), waiting)) {
                     void reservation.wait.then(() => reservation.release());
                     return {messageId};
                 }
@@ -6267,4 +6267,15 @@ async function* withCommandIds(
         }
         yield items;
     }
+}
+
+/**
+ * Whether a v2 prompt may join the running turn through `turn/steer`. Only ordinary text
+ * steers: a slash command or a `$skill` waits for its own execution slot (docs/steering.md),
+ * where its handling wraps or replaces the prompt.
+ */
+function canSteerV2Prompt(request: acp.PromptRequest, promptKind: PromptKind): boolean {
+    if (promptKind.kind !== "prompt" || parsePromptCommand(request.prompt) !== null) return false;
+    const first = request.prompt[0];
+    return first?.type !== "text" || !first.text.trim().startsWith("$");
 }
