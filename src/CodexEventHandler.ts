@@ -788,9 +788,6 @@ export class CodexEventHandler {
                 }
                 return this.renderer.render(commands.terminalInput(notification.params.itemId, notification.params.stdin));
             }
-            case "thread/section/changed":
-                // Thread sections have no ACP session update counterpart.
-                return null;
             case "thread/attachment/updated":
                 // Persisted attachment metadata has no ACP session update counterpart.
                 return null;
