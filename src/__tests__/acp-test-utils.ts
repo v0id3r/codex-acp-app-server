@@ -607,6 +607,7 @@ export function createTestEventHandler(
     sessionState: SessionState,
     options: {
         typedSessionFailures?: boolean;
+        v2FailureMeta?: boolean;
         sessionFailureEpoch?: string;
         onAccountUpdated?: (notification: AccountUpdatedNotification) => void;
         collectTurnDiffs?: boolean;
@@ -616,6 +617,7 @@ export function createTestEventHandler(
         connection,
         sessionState,
         options.typedSessionFailures ?? false,
+        options.v2FailureMeta ?? false,
         new SessionFailureIds(options.sessionFailureEpoch ?? "test-epoch"),
         sessionState.subagents,
         options.onAccountUpdated,

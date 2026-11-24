@@ -1,15 +1,19 @@
 import type {ContentBlock} from "@agentclientprotocol/sdk/unstable";
 import type {UpdateSessionEvent} from "./ACPSessionConnection";
 import {AIR_MESSAGE_PHASE_KEY, airOnlyMeta} from "./AirExtension";
+import {JAZ_PHASE_KEY, jazOnlyMeta} from "./JazMeta";
 
 type AcpMeta = Record<string, unknown>;
 
-/** The Codex phase of an agent message. Only AIR gets it, in `_meta.jetbrains.air.phase`. */
-export function createMessagePhaseMeta(phase: string | null | undefined, airClient: boolean): AcpMeta | undefined {
+/**
+ * The Codex phase of an agent message: `_meta.jetbrains.air.phase` for AIR on v1,
+ * `_meta.jaz.phase` on v2, where the AIR namespace does not apply.
+ */
+export function createMessagePhaseMeta(phase: string | null | undefined, airClient: boolean, v2Client = false): AcpMeta | undefined {
     if (!phase) {
         return undefined;
     }
-    return airOnlyMeta(airClient, AIR_MESSAGE_PHASE_KEY, phase);
+    return airOnlyMeta(airClient, AIR_MESSAGE_PHASE_KEY, phase) ?? jazOnlyMeta(v2Client, JAZ_PHASE_KEY, phase);
 }
 
 export function createUserMessageChunk(content: ContentBlock, messageId?: string, meta?: AcpMeta): UpdateSessionEvent {

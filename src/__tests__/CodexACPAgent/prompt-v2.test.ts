@@ -1,6 +1,7 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {ResponseError} from 'vscode-jsonrpc';
 import {
+    refuseSteers,
     sessionId,
     turnId,
     connectSession,
@@ -67,7 +68,7 @@ function sessionUpdates(transcript: TranscriptEntry[]) {
     return transcript.flatMap(entry => "sessionUpdate" in entry ? [entry.sessionUpdate] : []);
 }
 
-/** The transcript with the prompt's and the minted agent messages' ids replaced by placeholders. */
+/** The transcript with the prompt's, the minted agent messages' and the failure epoch's ids replaced by placeholders. */
 function stableTranscript(transcript: TranscriptEntry[], messageId: string): unknown {
     let json = dump(transcript, messageId);
     sessionUpdates(transcript).forEach(update => {
@@ -75,6 +76,8 @@ function stableTranscript(transcript: TranscriptEntry[], messageId: string): unk
             json = json.replaceAll(update.messageId as string, "<agentMessageId>");
         }
     });
+    // Unattributed session failures mint their id from the server's random epoch.
+    json = json.replace(/(:error:)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(:\d+)"/g, '$1<epoch>$2"');
     return JSON.parse(json);
 }
 
@@ -151,13 +154,13 @@ describe('session/prompt over ACP v2', () => {
         await expect(dump(results)).toMatchFileSnapshot('data/prompt-v2-turn-failed-or-interrupted.json');
     });
 
-    it('reports usage-limit and auth failures on idle/error while retaining their human-readable text', async () => {
+    it('reports usage-limit and auth failures on idle/error with a typed session failure', async () => {
         const client = await connectSession();
         closeClient = () => client.connection.close();
 
         const results = [];
         for (const [index, [info, message, expectedText]] of ([
-            ["usageLimitExceeded", "You've hit your usage limit.", "You've hit your usage limit.\n\n"],
+            ["usageLimitExceeded", "You've hit your usage limit.", "You've hit your usage limit."],
             // unauthorized routes through the ACP login flow instead of echoing the provider's text.
             ["unauthorized", "Your access token could not be refreshed.", "Authentication required"],
         ] as const).entries()) {
@@ -172,12 +175,17 @@ describe('session/prompt over ACP v2', () => {
             const transcript = client.transcript.slice(start);
             // The inserted request remains successful; terminal failure belongs to idle/error.
             expect(stateUpdates(transcript)).toEqual([{state: "running"}, {state: "idle", stopReason: "error"}]);
-            const agentMessages = sessionUpdates(transcript).filter(update => update.sessionUpdate === "agent_message_chunk");
-            expect(agentMessages).toEqual([expect.objectContaining({content: {type: "text", text: expectedText}})]);
-            const text = indexOf(transcript, entry => "sessionUpdate" in entry
-                && entry.sessionUpdate.sessionUpdate === "agent_message_chunk");
-            expect(indexOf(transcript, isState("running"))).toBeLessThan(text);
-            expect(text).toBeLessThan(indexOf(transcript, isState("idle")));
+            // The failure is told once, on the idle update, not as agent text.
+            expect(sessionUpdates(transcript).map(update => update.sessionUpdate))
+                .not.toEqual(expect.arrayContaining(["agent_message_chunk"]));
+            const idle = sessionUpdates(transcript).at(-1) as {error?: {code?: number, message?: string}, _meta?: Record<string, any>};
+            expect(idle.error?.message).toBe(expectedText);
+            if (info === "unauthorized") {
+                // Auth refusals stay untyped: the `auth_required` code starts the login flow.
+                expect(idle.error?.code).toBe(-32000);
+            } else {
+                expect(idle._meta?.["jaz"]?.sessionFailure).toMatchObject({severity: "error", title: expectedText});
+            }
             results.push({info, transcript: stableTranscript(transcript, messageId)});
         }
 
@@ -270,9 +278,9 @@ describe('session/prompt over ACP v2', () => {
                 expect(agentMessages).toEqual([]);
                 expect(idle._meta?.["jetbrains"]?.air?.sessionFailure).toMatchObject({category: "connection"});
             } else {
-                expect(agentMessages).toEqual([expect.objectContaining({
-                    content: {type: "text", text: "Connection to Codex was lost."},
-                })]);
+                // Plain v2 clients get the same synthetic `transport_lost` failure under `_meta.jaz`.
+                expect(agentMessages).toEqual([]);
+                expect(idle._meta?.["jaz"]?.sessionFailure).toMatchObject({category: "connection"});
                 expect(idle._meta?.["jetbrains"]).toBeUndefined();
             }
             results.push({typed, transcript: stableTranscript(transcript, messageId)});
@@ -284,7 +292,7 @@ describe('session/prompt over ACP v2', () => {
         await expect(dump(results)).toMatchFileSnapshot('data/prompt-v2-process-exit-after-insertion.json');
     });
 
-    it('ends a failing local command with its error as agent text and one idle', async () => {
+    it('ends a failing local command with its error on the idle and one idle', async () => {
         const client = await connectSession();
         closeClient = () => client.connection.close();
         client.setCodexResponse("thread/name/set", async () => {
@@ -296,10 +304,12 @@ describe('session/prompt over ACP v2', () => {
         await settle();
 
         expect(stateUpdates(client.transcript)).toEqual([{state: "running"}, {state: "idle", stopReason: "error"}]);
+        // Past insertion there is no request to answer, so the failure is told once on the idle.
         const agentMessages = sessionUpdates(client.transcript).filter(update => update.sessionUpdate === "agent_message_chunk");
-        expect(agentMessages).toEqual([expect.objectContaining({
-            content: {type: "text", text: "The '/rename' command failed: thread name could not be saved"},
-        })]);
+        expect(agentMessages).toEqual([]);
+        const idle = sessionUpdates(client.transcript).at(-1) as {error?: {message?: string}, _meta?: Record<string, any>};
+        expect(idle.error?.message).toBe("thread name could not be saved");
+        expect(idle._meta?.["jaz"]?.sessionFailure).toMatchObject({severity: "error"});
         await expect(dump(stableTranscript(client.transcript, messageId)))
             .toMatchFileSnapshot('data/prompt-v2-local-command-failed.json');
 
@@ -403,6 +413,7 @@ describe('session/prompt over ACP v2', () => {
     it('queues a prompt that overlaps a running one instead of rejecting it', async () => {
         const client = await connectSession();
         closeClient = () => client.connection.close();
+        refuseSteers(client);
 
         const first = client.sendPrompt([{type: "text", text: "Hello"}]);
         await vi.waitFor(() => expect(client.turnStartParams).toHaveLength(1));
@@ -444,6 +455,7 @@ describe('session/prompt over ACP v2', () => {
     it('queues multiple overlapping prompts and runs them in FIFO order', async () => {
         const client = await connectSession();
         closeClient = () => client.connection.close();
+        refuseSteers(client);
 
         const first = client.sendPrompt([{type: "text", text: "One"}]);
         await vi.waitFor(() => expect(client.turnStartParams).toHaveLength(1));
@@ -520,6 +532,7 @@ describe('session/prompt over ACP v2', () => {
     it('runs a queued prompt after the one ahead of it fails', async () => {
         const client = await connectSession();
         closeClient = () => client.connection.close();
+        refuseSteers(client);
 
         await insertPrompt(client, 0);
         const second = client.sendPrompt([{type: "text", text: "Again"}]);
@@ -552,6 +565,7 @@ describe('session/prompt over ACP v2', () => {
     it('takes the turn-start reservation synchronously, so two prompts sent back-to-back never race', async () => {
         const client = await connectSession();
         closeClient = () => client.connection.close();
+        refuseSteers(client);
 
         // Neither request is awaited before the next is sent: this exercises the reservation
         // being taken before either prompt's handler has had a chance to run any async work.

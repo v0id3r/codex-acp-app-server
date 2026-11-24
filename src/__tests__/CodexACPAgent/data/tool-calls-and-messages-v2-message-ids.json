@@ -30,13 +30,5 @@
       "type": "text"
     },
     "sessionUpdate": "agent_message_chunk"
-  },
-  {
-    "messageId": "<minted-messageId>",
-    "content": {
-      "text": "Something went wrong\n\n",
-      "type": "text"
-    },
-    "sessionUpdate": "agent_message_chunk"
   }
 ]

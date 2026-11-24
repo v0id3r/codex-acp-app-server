@@ -10,6 +10,16 @@
     "quota": {
       "token_count": null,
       "model_usage": []
+    },
+    "jaz": {
+      "sessionFailure": {
+        "id": "turn-1:error",
+        "revision": 1,
+        "category": "limit",
+        "severity": "error",
+        "title": "Try again later.",
+        "actions": []
+      }
     }
   },
   "state": "idle",

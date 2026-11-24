@@ -57,6 +57,7 @@ import {
     createAgentTextThoughtChunk,
 } from "./ContentChunks";
 import {goalSessionInfoUpdate, sameThreadGoalSnapshot, toThreadGoalSnapshot} from "./ThreadGoalSnapshot";
+import {JAZ_META_KEY, JAZ_SESSION_FAILURE_KEY} from "./JazMeta";
 import {logger} from "./Logger";
 import {recordOrNull} from "./permissions/json";
 import {
@@ -270,6 +271,7 @@ export class CodexEventHandler {
         connection: AcpClientConnection,
         sessionState: SessionState,
         supportsTypedSessionFailures: boolean,
+        private readonly v2FailureMeta: boolean,
         sessionFailureIds: SessionFailureIds,
         subagents: SubagentEventRouter,
         onAccountUpdated: ((notification: AccountUpdatedNotification) => void) | undefined,
@@ -901,7 +903,7 @@ export class CodexEventHandler {
     private createAgentMessageText(text: string, itemId: string, threadId: string): UpdateSessionEvent | null {
         if (text.length === 0) return null;
         const phase = this.streamsFor(threadId).agentMessagePhases.get(itemId) ?? null;
-        const meta = createMessagePhaseMeta(phase, this.sessionState.clientCapabilities.airClient);
+        const meta = createMessagePhaseMeta(phase, this.sessionState.clientCapabilities.airClient, this.session.protocolVersion === 2);
         return createAgentTextMessageChunk(text, itemId, meta);
     }
 
@@ -1353,6 +1355,14 @@ export class CodexEventHandler {
     private createSessionFailureMeta(
         failure: NonNullable<SessionState["sessionFailure"]>,
     ): Record<string, unknown> {
+        // v2 connections are not AIR clients; the same failure shape rides `_meta.jaz`.
+        if (this.v2FailureMeta) {
+            return {
+                [JAZ_META_KEY]: {
+                    [JAZ_SESSION_FAILURE_KEY]: failure,
+                },
+            };
+        }
         return {
             [JETBRAINS_META_KEY]: {
                 [AIR_META_KEY]: {

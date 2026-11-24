@@ -68,16 +68,6 @@
       },
       {
         "sessionUpdate": {
-          "messageId": "<agentMessageId>",
-          "content": {
-            "text": "You've hit your usage limit.\n\n",
-            "type": "text"
-          },
-          "sessionUpdate": "agent_message_chunk"
-        }
-      },
-      {
-        "sessionUpdate": {
           "error": {
             "code": -32603,
             "message": "You've hit your usage limit."
@@ -89,6 +79,16 @@
             "quota": {
               "token_count": null,
               "model_usage": []
+            },
+            "jaz": {
+              "sessionFailure": {
+                "id": "turn-1:error",
+                "revision": 1,
+                "category": "limit",
+                "severity": "error",
+                "title": "You've hit your usage limit.",
+                "actions": []
+              }
             }
           },
           "state": "idle",
@@ -163,16 +163,6 @@
       },
       {
         "codexNotification": "turn/completed"
-      },
-      {
-        "sessionUpdate": {
-          "messageId": "<agentMessageId>",
-          "content": {
-            "text": "Authentication required",
-            "type": "text"
-          },
-          "sessionUpdate": "agent_message_chunk"
-        }
       },
       {
         "sessionUpdate": {

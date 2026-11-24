@@ -428,6 +428,13 @@ export function createReplacementCodexAcpClient(): {
     };
 }
 
+/** Makes `turn/steer` refuse, so a prompt sent during a running turn queues instead of steering into it. */
+export function refuseSteers(client: PromptSession): void {
+    client.setCodexResponse("turn/steer", async () => {
+        throw new Error("no active turn to steer");
+    });
+}
+
 export function userMessageItem(clientId: string | null, text = "Hello"): ThreadItem {
     return {type: "userMessage", id: "item-user", clientId, content: [{type: "text", text, text_elements: []}]};
 }

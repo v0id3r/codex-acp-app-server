@@ -40,6 +40,18 @@
         "quota": {
           "token_count": null,
           "model_usage": []
+        },
+        "jaz": {
+          "sessionFailure": {
+            "id": "turn-1:error",
+            "revision": 1,
+            "category": "service",
+            "severity": "error",
+            "title": "Turn failed",
+            "actions": [
+              "retry"
+            ]
+          }
         }
       },
       "state": "idle",

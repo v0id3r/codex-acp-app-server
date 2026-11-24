@@ -23,16 +23,6 @@
   },
   {
     "sessionUpdate": {
-      "messageId": "<agentMessageId>",
-      "content": {
-        "text": "The '/rename' command failed: thread name could not be saved",
-        "type": "text"
-      },
-      "sessionUpdate": "agent_message_chunk"
-    }
-  },
-  {
-    "sessionUpdate": {
       "error": {
         "code": -32603,
         "message": "thread name could not be saved"
@@ -44,6 +34,19 @@
         "quota": {
           "token_count": null,
           "model_usage": []
+        },
+        "jaz": {
+          "sessionFailure": {
+            "id": "thread-1:error:<epoch>:1",
+            "revision": 1,
+            "category": "service",
+            "severity": "error",
+            "title": "Codex encountered an internal error.",
+            "actions": [
+              "retry",
+              "new_session"
+            ]
+          }
         }
       },
       "state": "idle",

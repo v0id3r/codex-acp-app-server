@@ -81,26 +81,12 @@ describe('tool calls and messages over ACP v2', () => {
         emitDelta("item/reasoning/summaryTextDelta", "item-reasoning", "hard");
         emitDelta("item/agentMessage/delta", "item-agent", "Hel");
         emitDelta("item/agentMessage/delta", "item-agent", "lo");
-        // A turn error is reported as a one-off agent chunk with no Codex item behind it.
-        client.emit({
-            method: "error",
-            params: {
-                threadId: sessionId,
-                turnId,
-                willRetry: false,
-                error: {message: "Something went wrong", codexErrorInfo: null, additionalDetails: null, misalignment: null},
-            },
-        });
         await finishTurn(client);
 
         const chunks = updatesTagged(client, "agent_message_chunk", "agent_thought_chunk") as Array<acpV2.SessionUpdate & {messageId: string}>;
-        expect(chunks.map(chunk => chunk.messageId).slice(0, 4))
+        expect(chunks.map(chunk => chunk.messageId))
             .toEqual(["item-reasoning", "item-reasoning", "item-agent", "item-agent"]);
-        const mintedId = chunks[4]!.messageId;
-        expect(mintedId).toEqual(expect.any(String));
-        expect(mintedId).not.toBe("");
-        expect(["item-reasoning", "item-agent"]).not.toContain(mintedId);
-        await expect(dump(chunks).replaceAll(mintedId, "<minted-messageId>"))
+        await expect(dump(chunks))
             .toMatchFileSnapshot('data/tool-calls-and-messages-v2-message-ids.json');
     });
 
@@ -152,6 +138,32 @@ describe('tool calls and messages over ACP v2', () => {
 
         await expect(dump(updatesTagged(client, "agent_message_chunk")))
             .toMatchFileSnapshot('data/tool-calls-and-messages-v2-without-deltas.json');
+    });
+
+    it('marks interim and final agent messages with _meta.jaz.phase', async () => {
+        const client = await connectSession();
+        closeClient = () => client.connection.close();
+        await startTurn(client);
+
+        const message = (id: string, phase: "commentary" | "final_answer") => ({
+            type: "agentMessage" as const,
+            id,
+            text: `${id} text`,
+            phase,
+            moderation: null,
+            memoryCitation: null,
+            delivery: null,
+            questions: null,
+        });
+        client.emit(itemCompleted(message("item-interim", "commentary")));
+        client.emit(itemCompleted(message("item-final", "final_answer")));
+        await finishTurn(client);
+
+        const chunks = updatesTagged(client, "agent_message_chunk") as Array<{messageId: string; _meta?: unknown}>;
+        expect(chunks.map(update => [update.messageId, update._meta])).toEqual([
+            ["item-interim", {jaz: {phase: "commentary"}}],
+            ["item-final", {jaz: {phase: "final_answer"}}],
+        ]);
     });
 
     it('sends a tool call create as a tool_call_update upsert and passes later updates through', async () => {

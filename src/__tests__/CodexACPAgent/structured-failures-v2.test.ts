@@ -80,7 +80,7 @@ describe("standard ACP v2 terminal failures", () => {
         expect(idle).toMatchObject({state: "idle", stopReason: "error", error: {code: -32603, message: "Try again later."}});
         expect(JSON.stringify(idle)).not.toContain("private diagnostics");
         if (air) expect(idle._meta).toHaveProperty("jetbrains.air.sessionFailure.severity", "error");
-        else expect(idle._meta).not.toHaveProperty("jetbrains");
+        else expect(idle._meta).toHaveProperty("jaz.sessionFailure.severity", "error");
         await expect(dump(idle)).toMatchFileSnapshot(`data/structured-failure-v2-provider-${air ? "air" : "plain"}.json`);
 
         await client.request("session/resume", {sessionId, cwd});

@@ -62,16 +62,6 @@
       },
       {
         "sessionUpdate": {
-          "messageId": "<agentMessageId>",
-          "content": {
-            "text": "Connection to Codex was lost.",
-            "type": "text"
-          },
-          "sessionUpdate": "agent_message_chunk"
-        }
-      },
-      {
-        "sessionUpdate": {
           "error": {
             "code": 1001,
             "message": "Connection to Codex was lost."
@@ -83,6 +73,19 @@
             "quota": {
               "token_count": null,
               "model_usage": []
+            },
+            "jaz": {
+              "sessionFailure": {
+                "id": "turn-1:error",
+                "revision": 1,
+                "category": "connection",
+                "severity": "error",
+                "title": "Connection to Codex was lost.",
+                "actions": [
+                  "retry",
+                  "new_session"
+                ]
+              }
             }
           },
           "state": "idle",

@@ -16,6 +16,7 @@ import {
     sessionId,
     turnId,
     cwd,
+    refuseSteers,
     type PromptSession,
 } from './v2-prompt-harness';
 import {expectConformingV2SessionUpdates} from './v2-session-update-guard';
@@ -86,6 +87,7 @@ describe('session/cancel and session/close over ACP v2', () => {
     it('drops queued prompts with -32800 on cancel, and lets a later prompt run normally', async () => {
         const client = await connectSession();
         closeClient = () => client.connection.close();
+        refuseSteers(client);
 
         const first = client.sendPrompt([{type: "text", text: "One"}]);
         await vi.waitFor(() => expect(client.turnStartParams).toHaveLength(1));
@@ -139,6 +141,7 @@ describe('session/cancel and session/close over ACP v2', () => {
     it.each(["ack-before-end", "end-before-ack", "late-no-active"] as const)(
         "does not cancel a later prompt while an older interrupt is pending (%s)", async ordering => {
             const client = await connectSession();
+            refuseSteers(client);
             closeClient = () => client.connection.close();
             const interrupting = deferred<void>();
             const release = deferred<void>();
@@ -189,6 +192,7 @@ describe('session/cancel and session/close over ACP v2', () => {
     it('drops a queued prompt with -32800 on session/close', async () => {
         const client = await connectSession();
         closeClient = null; // closeSession below already tears the session down.
+        refuseSteers(client);
 
         const first = client.sendPrompt([{type: "text", text: "One"}]);
         await vi.waitFor(() => expect(client.turnStartParams).toHaveLength(1));
@@ -241,6 +245,7 @@ describe('session/cancel and session/close over ACP v2', () => {
 
     it('drops one queued prompt via `$/cancel_request`, leaving the other to run normally', async () => {
         const client = await connectSession();
+        refuseSteers(client);
         closeClient = () => client.connection.close();
 
         const first = client.sendPrompt([{type: "text", text: "One"}]);

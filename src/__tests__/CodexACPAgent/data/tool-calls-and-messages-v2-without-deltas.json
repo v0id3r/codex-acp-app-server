@@ -5,6 +5,11 @@
       "text": "Which environment?\n- Staging\n- Production",
       "type": "text"
     },
+    "_meta": {
+      "jaz": {
+        "phase": "final_answer"
+      }
+    },
     "sessionUpdate": "agent_message_chunk"
   }
 ]

@@ -35,6 +35,7 @@ export class CodexTurn {
             connection,
             state,
             false,
+            false,
             new SessionFailureIds(randomUUID()),
             new CodexSubagentEventRouter(
                 state.sessionId,

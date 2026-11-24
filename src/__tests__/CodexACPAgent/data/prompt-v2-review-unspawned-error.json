@@ -26,16 +26,6 @@
   },
   {
     "sessionUpdate": {
-      "messageId": "<agentMessageId>",
-      "content": {
-        "text": "/test/cwd is not a git repository\n\n",
-        "type": "text"
-      },
-      "sessionUpdate": "agent_message_chunk"
-    }
-  },
-  {
-    "sessionUpdate": {
       "error": {
         "code": -32603,
         "message": "/test/cwd is not a git repository"
@@ -47,6 +37,18 @@
         "quota": {
           "token_count": null,
           "model_usage": []
+        },
+        "jaz": {
+          "sessionFailure": {
+            "id": "review-parent:error",
+            "revision": 1,
+            "category": "service",
+            "severity": "error",
+            "title": "/test/cwd is not a git repository",
+            "actions": [
+              "retry"
+            ]
+          }
         }
       },
       "state": "idle",
