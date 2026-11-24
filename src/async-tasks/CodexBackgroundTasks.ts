@@ -49,7 +49,7 @@ type TerminalSnapshot = {
 const LIVE_POLL_MS = 1_000;
 
 /** One runtime inventory for the AIR extension and the ACP v2 display terminals. */
-export class CodexBackgroundTerminalTasks {
+export class CodexBackgroundTasks {
     /** The live tasks. A task leaves the map when it ends, so the map holds only the running commands. */
     private readonly tasks = new Map<string, Task>();
     /**
@@ -221,7 +221,9 @@ export class CodexBackgroundTerminalTasks {
     async stop(taskId: string): Promise<boolean> {
         if (!this.isActive()) return false;
         const task = this.tasks.get(taskId);
-        if (!task || task.publication !== "published") return false;
+        if (!task) return false;
+        if (this.standard) return this.cancelTerminal(task.sessionId, task.itemId);
+        if (task.publication !== "published") return false;
         return this.stopTask(task);
     }
 

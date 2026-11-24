@@ -74,24 +74,10 @@ export type UserMessageInsertion = {
     clientUserMessageId: string;
     onInserted: () => Promise<void>;
     /**
-     * Shows a synthetic prompt codex-acp starts itself (the plan-implementation follow-up turn,
-     * a `/goal` continuation) as a live `user_message`, once its own minted `clientUserMessageId`
-     * is echoed back. These turns run inside the original prompt's running…idle pair, so this
-     * only emits the chunks: no response is resolved and no `state_update` is sent.
+     * An adopted turn was already running when Codex steered this input into it.
+     * Withdrawing this prompt must not interrupt that turn.
      */
-    onSyntheticInserted: (clientUserMessageId: string, prompt: acp.ContentBlock[]) => Promise<void>;
-    /**
-     * Fired synchronously once, from the turn-start response, when Codex steers this prompt into
-     * a turn that was already running and unowned (its `running` went out before this prompt
-     * existed). Lets the caller skip sending a duplicate `running` and still close the turn with
-     * one `idle` if the steered input never lands.
-     */
-    onTurnAdopted?: () => void;
-    /**
-     * Fired synchronously each time a turn starts (or restarts) for this prompt, with the turn's
-     * ids. Lets a pending `$/cancel_request` interrupt the right turn before insertion.
-     */
-    onTurnStarted?: (turn: {threadId: string, turnId: string}) => void;
+    onTurnStarted?: (turn: {threadId: string, turnId: string, adopted: boolean}) => void;
     /** Reports terminal work failure without changing the v1 prompt response or depending on AIR. */
     onFailure?: (error: acpV2.Error) => void;
 };
@@ -111,6 +97,12 @@ export function isInsertedUserMessage(
         && event.params.threadId === threadId
         && event.params.item.type === "userMessage"
         && event.params.item.clientId === clientUserMessageId;
+}
+
+/** The identity and cancellation of a native v2 prompt offered to a running turn. */
+export interface V2SteeringPrompt {
+    messageId: string;
+    signal: AbortSignal;
 }
 
 const SUPPORTED_PROMPT_CONTENT_TYPES = new Set(["text", "image", "resource_link", "resource"]);

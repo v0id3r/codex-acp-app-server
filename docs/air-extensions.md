@@ -20,6 +20,7 @@ It describes only this adapter.
 - [Plan content delta and plan review](#plan-content-delta-and-plan-review)
 - [Goal](#goal)
 - [Recommended config values](#recommended-config-values)
+- [Model reasoning efforts](#model-reasoning-efforts)
 - [Async tasks](#async-tasks)
 - [Agent file-change report](#agent-file-change-report)
 - [Session failure](#session-failure)
@@ -62,6 +63,7 @@ Only these differences are allowed:
   no output after a tool call ended, a terminal status for a replayed image generation,
   and the command as the title of a command approval.
 - Feature changes for every client: the `/mcp` command has a new description and an input hint.
+  The adapter advertises [`auth.status`](auth-status.md) and sends `auth/status_update` alongside the legacy `_auth/status_update`.
   Session `configOptions` list model, reasoning effort, fast mode, permissions mode, and collaboration mode
   in that order, omitting unavailable options.
 - The client gets no AIR-only key.
@@ -221,6 +223,7 @@ The adapter sends these keys only to AIR. "AIR" in the gate column means that th
 | `permission` | `session/request_permission` request `_meta.jetbrains.air` | `{version: 1, title, description?}` | AIR |
 | `permission` | permission option `_meta.jetbrains.air` | `{version: 1, description}` | AIR |
 | `recommendedValue` | `model` and `reasoning_effort` config options, `_meta.jetbrains.air` | option value string | `recommendedValue` |
+| `reasoningEfforts` | entry of the `model` config option, `_meta.jetbrains.air` | `{values, recommended?}` | AIR |
 | `asyncTasks` | `tool_call_update._meta.jetbrains.air` | `{backgrounded: true}` | `asyncTasks` |
 | `agentFileChangeReportRequest` | `session/prompt` request `_meta.jetbrains.air` (client to agent) | `{version: 1, requestId}` | `agentFileChangeReport` |
 | `agentFileChangeReport` | `session_info_update._meta.jetbrains.air` | report object | `agentFileChangeReport` |
@@ -781,11 +784,46 @@ When the client declares `recommendedValue`, a selector with a recommendation ca
 
 Without the capability, the config options keep their old shape and carry no recommendation.
 
+## Model reasoning efforts
+
+The `reasoningEfforts` key lets a client show the efforts of a model before the user selects it.
+It applies to the entries of the `model` config selector.
+
+The key needs no capability, because it only adds data.
+The adapter sends it to every AIR client. A client that is not AIR gets no `reasoningEfforts` key.
+
+A model entry with efforts carries:
+
+```json
+{
+  "value": "gpt-5.6-luna",
+  "name": "5.6 Luna",
+  "_meta": {
+    "jetbrains": {
+      "air": {
+        "version": 1,
+        "reasoningEfforts": { "values": ["low", "medium", "high", "xhigh"], "recommended": "medium" }
+      }
+    }
+  }
+}
+```
+
+- `values` lists the effort ids of the model in the Codex order. The `reasoning_effort` selector uses the same order.
+- `recommended` is the `defaultReasoningEffort` of the model. The adapter sends it only when `values` contains it.
+- For the current model, `recommended` is the effort that `recommendedValue` names on the `reasoning_effort` selector.
+- An entry of a model without efforts gets no `reasoningEfforts` key.
+- The current model that is not in the Codex catalog gets no `reasoningEfforts` key.
+- The adapter sends the key in every answer that carries config options, in ACP v1 and v2.
+- Subagent model selectors do not carry the key.
+
 ## Async tasks
 
 Codex app-server owns shell commands that keep running after their tool call.
-The adapter exposes them as async tasks when the client declares `asyncTasks`.
-Without the capability, the adapter sends no async task update.
+The legacy Air extension exposes them as async tasks when the client declares `asyncTasks`.
+Without the capability, the adapter sends no legacy async task update.
+ACP v1 uses `async_task_spawned`, `async_task_progress`, and `async_task_state_update`.
+ACP v2 uses standard terminals and background snapshots. See [background work](background-work.md).
 
 ### Lifecycle
 
@@ -1007,16 +1045,16 @@ Recovery never removes the transcript record.
 
 ## Native subagent sessions
 
-AIR keeps the private subagent contract that predates the ACP Subagent Sessions RFD.
-[Subagent sessions](subagent-sessions.md#air-legacy-contract) describes its lifecycle and the standard contract of other clients.
-This section covers only the AIR bridge.
+ACP v2 always uses the standard subagent contract, including for Air clients.
+[Subagent sessions](subagent-sessions.md) describes its lifecycle, delegated messages, and session references.
+This section covers the private Air bridge on ACP v1.
+It sends `subagent_spawned` and `subagent_state_update`.
 
-- AIR declares `nativeSubagentSessions` in `_meta.jetbrains.air.capabilities`, or on v1 `clientCapabilities.subagents: {}`.
-- Either signal enables native subagent sessions for AIR.
-- The agent advertises `agentCapabilities.sessionCapabilities.subagents` and `nativeSubagentSessions` to AIR only.
-  A client that is not AIR gets neither, because the RFD defines no Agent-side capability.
+- Air v1 declares `nativeSubagentSessions` in `_meta.jetbrains.air.capabilities`, or `clientCapabilities.subagents: {}`.
+- Either signal enables the legacy bridge for Air v1.
+- Only that bridge advertises `agentCapabilities.sessionCapabilities.subagents` and `nativeSubagentSessions`.
 - Without either signal, a Codex subagent stays an ordinary tool call.
-  AIR gets `_meta.jetbrains.air.subagent: true` on a spawn. Another client gets the tool call without `_meta`.
+  Air v1 gets `_meta.jetbrains.air.subagent: true` on a spawn. Another client gets the tool call without `_meta`.
 
 ## Session index
 
@@ -1200,10 +1238,11 @@ A thread that is not loaded here has no `state`. A change of `state` is a row ch
 - Errors:
   - A thread that another Codex process holds fails with the `thread_active_writer` reason in `data.reason`.
   - A thread that Codex does not have, or has deleted, fails with `-32002`, as does a thread that `thread/read`
-    shows without a rollout. Unarchive never brings back a deleted thread.
+    shows without a rollout. V2 `session/delete` succeeds if the thread is already gone. Unarchive never brings back a deleted thread.
 - Without `sessionIndex` the three `_session/*` methods answer method-not-found, and `session/delete` keeps
   archiving the thread: old AIR builds send `session/delete` for "Done". Threads they closed that way show as
-  archived to a `sessionIndex` client.
+  archived to a `sessionIndex` client. For a v2 client without the separate archive operation, resume, fork
+  and set-title on a soft-deleted session return `-32002` with `data.sessionId`.
 
 ### Batch get
 

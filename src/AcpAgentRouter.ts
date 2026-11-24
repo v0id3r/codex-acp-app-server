@@ -2,12 +2,15 @@ import * as acp from "@agentclientprotocol/sdk/unstable";
 import * as acpV2 from "@agentclientprotocol/sdk/experimental/v2/unstable";
 import {McpOverAcpHttpBridge} from "@agentclientprotocol/sdk/experimental/mcp-http";
 import {z} from "zod";
+import {isRecord} from "./permissions/json";
+import {validateInitialConfigOptions} from "./SessionConfigOptions";
 import type {CodexAcpServer} from "./CodexAcpServer";
 import {type AcpClientConnection, AcpV2Connection} from "./ACPSessionConnection";
-import type {McpOverAcpToHttp} from "./McpServerConfig";
+import {normalizeMcpServer, type McpOverAcpToHttp} from "./McpServerConfig";
 import packageJson from "../package.json";
 import {AcpResponseDelivery} from "./AcpResponseDelivery";
 import {isAbsoluteProtocolPath} from "./PathUtils";
+import {storedSessionError} from "./CodexThreadErrors";
 import {
     GOAL_CONTROL_METHOD, LEGACY_SET_SESSION_MODEL_METHOD,
     SESSION_STEERING_METHOD,
@@ -99,7 +102,7 @@ function createRouter(
         if (typeof params?.sessionId === "string") codexAcpServer.assertSessionMutationAllowed(params.sessionId);
         return codexAcpServer;
     };
-    const getAgentForPaths = (params: {sessionId?: string; cwd?: string | null; additionalDirectories?: string[] | null}): CodexAcpServer => {
+    const getAgentForPaths = (params: {sessionId?: string | null; cwd?: string | null; additionalDirectories?: string[] | null}): CodexAcpServer => {
         if (params.cwd != null && !isAbsoluteProtocolPath(params.cwd)) {
             throw acp.RequestError.invalidParams(undefined, "cwd must be an absolute path");
         }
@@ -108,10 +111,20 @@ function createRouter(
         }
         return getAgent(params);
     };
+    const forStoredSessionV2 = async <T>(
+        params: {sessionId: string; cwd?: string | null; additionalDirectories?: string[] | null},
+        operation: (agent: CodexAcpServer) => Promise<T>,
+    ): Promise<T> => {
+        const agent = getAgentForPaths(params);
+        try { return await operation(agent); }
+        catch (error) { throw storedSessionError(params.sessionId, error, agent.sessionIndex.enabled); }
+    };
     type SetupState = {tail: Promise<void>; publication: Promise<void>; epoch: number; pending: number};
     const setups = new Map<string, SetupState>();
-    const setup = <T>(sessionId: string, requestId: acpV2.JsonRpcId, operation: () => Promise<T>, signal: AbortSignal): Promise<T> => {
+    const setup = <T>(params: {sessionId: string; configOptions?: unknown}, requestId: acpV2.JsonRpcId, operation: () => Promise<T>, signal: AbortSignal): Promise<T> => {
+        const {sessionId} = params;
         const agent = getAgent({sessionId});
+        validateInitialConfigOptions(params.configOptions, agent.protocolVersion);
         if (!agent.usesStandardSubagents()) {
             return operation().then(result => {
                 const publish = agent.captureSessionSetupPublication(sessionId);
@@ -193,18 +206,20 @@ function createRouter(
         .onConnect(({client, signal}) => attachAgent(createAgent(client, server => bridge.toHttp(client, server)), signal))
         .onNotification(acp.methods.agent.mcp.message, mcp.handleNotification)
         .onRequest(acp.methods.agent.initialize, (ctx) => initialize(ctx.requestId, () => getAgent().initialize(ctx.params)))
+        .onRequest(acp.methods.agent.session.options, ctx => getAgentForPaths(ctx.params).sessionOptions(ctx.params))
         .onRequest(acp.methods.agent.session.new, (ctx) => createdSetup(ctx.requestId, () => getAgentForPaths(ctx.params).newSession(ctx.params)))
-        .onRequest(acp.methods.agent.session.load, (ctx) => setup(ctx.params.sessionId, ctx.requestId, () => getAgentForPaths(ctx.params).loadSession(ctx.params), ctx.signal))
+        .onRequest(acp.methods.agent.session.load, (ctx) => setup(ctx.params, ctx.requestId, () => getAgentForPaths(ctx.params).loadSession(ctx.params), ctx.signal))
         .onRequest(acp.methods.agent.session.fork, (ctx) => createdSetup(ctx.requestId, () => getAgentForPaths(ctx.params).forkSession(ctx.params)))
         .onRequest(acp.methods.agent.session.list, (ctx) => getAgentForPaths({cwd: ctx.params.cwd ?? null}).listSessions(ctx.params))
         .onRequest(acp.methods.agent.session.delete, (ctx) => getAgent(ctx.params).deleteSession(ctx.params))
-        .onRequest(acp.methods.agent.session.resume, (ctx) => setup(ctx.params.sessionId, ctx.requestId, () => getAgentForPaths(ctx.params).resumeSession(ctx.params), ctx.signal))
+        .onRequest(acp.methods.agent.session.resume, (ctx) => setup(ctx.params, ctx.requestId, () => getAgentForPaths(ctx.params).resumeSession(ctx.params), ctx.signal))
         .onRequest(acp.methods.agent.session.close, (ctx) => getAgent(ctx.params).closeSession(ctx.params))
         .onRequest(acp.methods.agent.session.setMode, (ctx) => getAgent(ctx.params).setSessionMode(ctx.params))
         .onRequest(acp.methods.agent.session.setConfigOption, (ctx) => getAgent(ctx.params).setSessionConfigOption(ctx.params))
         .onRequest(acp.methods.agent.session.setTitle, (ctx) => getAgent(ctx.params).sessionIndex.setTitle(ctx.params))
         .onRequest(acp.methods.agent.authenticate, (ctx) => getAgent().authenticate(ctx.params, ctx.requestId, ctx.signal))
         .onRequest(acp.methods.agent.logout, (ctx) => getAgent().logout(ctx.params))
+        .onRequest(acp.methods.agent.auth.status, () => getAgent().authStatus())
         .onRequest(acp.methods.agent.providers.list, (ctx) => getAgent().listProviders(ctx.params))
         .onRequest(acp.methods.agent.providers.set, (ctx) => getAgent().setProvider(ctx.params))
         .onRequest(acp.methods.agent.providers.disable, (ctx) => getAgent().disableProvider(ctx.params))
@@ -225,24 +240,45 @@ function createRouter(
         .onRequest(SESSION_LIST_SUBSCRIBE_METHOD, sessionListSubscriptionParamsParser, (ctx) => getAgent().sessionIndex.subscribeList(ctx.params))
         .onRequest(SESSION_LIST_UNSUBSCRIBE_METHOD, sessionListSubscriptionParamsParser, (ctx) => getAgent().sessionIndex.unsubscribeList(ctx.params));
 
+    let advertisedMcp: acpV2.McpCapabilities | null = null;
+    // Check transports and Codex constraints before setup can suspend child controls.
+    const withSupportedMcpServers = <P extends Pick<acpV2.NewSessionRequest, "mcpServers">, R>(
+        handle: acpV2.AgentRequestHandler<P, R>,
+    ): acpV2.AgentRequestHandler<P, R> => ctx => {
+        acpV2.assertSupportedMcpServers(ctx.params.mcpServers, advertisedMcp);
+        for (const server of ctx.params.mcpServers ?? []) {
+            if (server.type === "stdio") normalizeMcpServer(server);
+        }
+        return handle(ctx);
+    };
+
     const v2Agent = acpV2.agent({name: packageJson.name})
         .onConnect(({client, signal}) => attachAgent(createAgent(new AcpV2Connection(client), server => bridge.toHttp(client, server)), signal))
         .onNotification(acpV2.methods.agent.mcp.message, mcp.handleNotification)
-        .onRequest(acpV2.methods.agent.initialize, (ctx) => initialize(ctx.requestId, () => getAgent().initializeV2(ctx.params)))
+        .onRequest(acpV2.methods.agent.initialize, (ctx) => initialize(ctx.requestId, async () => {
+            const response = await getAgent().initializeV2(ctx.params);
+            advertisedMcp = response.capabilities?.session?.mcp ?? null;
+            return response;
+        }))
         // No `session/load`: v2 folds it into `session/resume` with `replayFrom`.
-        .onRequest(acpV2.methods.agent.session.new, (ctx) => createdSetup(ctx.requestId, () => getAgentForPaths(ctx.params).newSessionV2(ctx.params)))
+        .onRequest(acpV2.methods.agent.session.options, ctx => getAgentForPaths(ctx.params).sessionOptionsV2(ctx.params))
+        .onRequest(acpV2.methods.agent.session.new, withSupportedMcpServers(ctx =>
+            createdSetup(ctx.requestId, () => getAgentForPaths(ctx.params).newSessionV2(ctx.params))))
         .onRequest(acpV2.methods.agent.session.list, (ctx) => getAgentForPaths({cwd: ctx.params.cwd ?? null}).listSessions(ctx.params))
         .onRequest(acpV2.methods.agent.session.delete, (ctx) => getAgent(ctx.params).deleteSession(ctx.params))
-        .onRequest(acpV2.methods.agent.session.resume, (ctx) => setup(ctx.params.sessionId, ctx.requestId, () => getAgentForPaths(ctx.params).resumeSessionV2(ctx.params, ctx.signal), ctx.signal))
-        .onRequest(acpV2.methods.agent.session.fork, (ctx) => createdSetup(ctx.requestId, () => getAgentForPaths(ctx.params).forkSessionV2(ctx.params)))
+        .onRequest(acpV2.methods.agent.session.resume, withSupportedMcpServers(ctx =>
+            setup(ctx.params, ctx.requestId, () => forStoredSessionV2(ctx.params, agent => agent.resumeSessionV2(ctx.params, ctx.signal)), ctx.signal)))
+        .onRequest(acpV2.methods.agent.session.fork, withSupportedMcpServers(ctx =>
+            createdSetup(ctx.requestId, () => forStoredSessionV2(ctx.params, agent => agent.forkSessionV2(ctx.params)))))
         .onRequest(acpV2.methods.agent.session.close, (ctx) => getAgent(ctx.params).closeSession(ctx.params))
         .onRequest(acpV2.methods.agent.terminal.cancel, (ctx) => getAgent().cancelTerminalV2(ctx.params))
         // No `session/set_mode`: v2 removed the modes API; modes are config options.
         .onRequest(acpV2.methods.agent.session.setConfigOption, (ctx) => getAgent(ctx.params).setSessionConfigOptionV2(ctx.params))
-        .onRequest(acpV2.methods.agent.session.setTitle, (ctx) => getAgent(ctx.params).sessionIndex.setTitle(ctx.params))
+        .onRequest(acpV2.methods.agent.session.setTitle, (ctx) => forStoredSessionV2(ctx.params, agent => agent.sessionIndex.setTitle(ctx.params)))
         // The v1-only `authentication/status|logout` extensions are not registered on v2.
         .onRequest(acpV2.methods.agent.auth.login, (ctx) => getAgent().authenticateV2(ctx.params, ctx.requestId, ctx.signal))
         .onRequest(acpV2.methods.agent.auth.logout, (ctx) => getAgent().logoutV2(ctx.params))
+        .onRequest(acpV2.methods.agent.auth.status, () => getAgent().authStatus())
         .onRequest(acpV2.methods.agent.session.prompt, (ctx) => getAgent(ctx.params).promptV2(ctx.params, ctx.signal))
         .onNotification(acpV2.methods.agent.session.cancel, (ctx) => getAgent().cancel(ctx.params))
         .onRequest(acpV2.methods.agent.providers.list, (ctx) => getAgent().listProviders(ctx.params))
@@ -256,9 +292,32 @@ function createRouter(
         .onRequest(SESSION_ARCHIVE_METHOD, sessionArchiveParamsParser, (ctx) => getAgent(ctx.params).sessionIndex.setArchived(ctx.params, true))
         .onRequest(SESSION_UNARCHIVE_METHOD, sessionArchiveParamsParser, (ctx) => getAgent(ctx.params).sessionIndex.setArchived(ctx.params, false))
         .onRequest(SESSION_LIST_SUBSCRIBE_METHOD, sessionListSubscriptionParamsParser, (ctx) => getAgent().sessionIndex.subscribeList(ctx.params))
-        .onRequest(SESSION_LIST_UNSUBSCRIBE_METHOD, sessionListSubscriptionParamsParser, (ctx) => getAgent().sessionIndex.unsubscribeList(ctx.params))
-        // SDK 2.8.0 defaults unimplemented tool/terminal cancel methods to -32602.
-        .onRequest("*", ({method}) => { throw acpV2.RequestError.methodNotFound(method); });
+        .onRequest(SESSION_LIST_UNSUBSCRIBE_METHOD, sessionListSubscriptionParamsParser, (ctx) => getAgent().sessionIndex.unsubscribeList(ctx.params));
 
-    return acpV2.agentProtocolRouter().withV1(v1Agent).withV2(v2Agent);
+    const v1Connector: acp.AgentConnector = v1Agent;
+    return acpV2.agentProtocolRouter().withV1({
+        connect(stream, options) {
+            const readable = stream.readable.pipeThrough(new TransformStream<acp.AnyMessage, acp.AnyMessage>({
+                transform(message, controller) {
+                    controller.enqueue(validateV1SetupMessage(message));
+                },
+            }));
+            return v1Connector.connect({...stream, readable}, options);
+        },
+    }).withV2(v2Agent);
+}
+
+const setupMethods = new Set<string>(["session/new", "session/load", "session/resume", "session/fork"]);
+
+function validateV1SetupMessage(message: acp.AnyMessage): acp.AnyMessage {
+    if (!isRecord(message) || !("method" in message) || !setupMethods.has(message.method)
+        || !isRecord(message.params)) return message;
+    const entries = message.params["configOptions"];
+    // SDK 2.9 treats a string on a boolean entry as an ID. Keep the request invalid
+    // through SDK parsing so its normal dispatcher reports Invalid params.
+    if (Array.isArray(entries) && entries.some(entry =>
+        isRecord(entry) && entry["type"] === "boolean" && typeof entry["value"] === "string")) {
+        return {...message, params: {...message.params, configOptions: false}};
+    }
+    return message;
 }

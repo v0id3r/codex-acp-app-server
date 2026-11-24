@@ -44,7 +44,6 @@ export class CodexTurn {
                 () => {},
                 () => null,
             ),
-            undefined,
             false,
             false,
             false,
@@ -61,7 +60,6 @@ export class CodexTurn {
         );
         const observeInteraction = async (event: ServerNotification) => {
             permissionContext.handleNotification(event);
-            await elicitations.handleNotification(event);
         };
         await codex.subscribeToSessionEvents(
             state.sessionId,
