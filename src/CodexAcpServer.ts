@@ -5171,6 +5171,16 @@ export class CodexAcpServer {
             run().then(
                 async (response) => {
                     this.v2PromptsInFlight.delete(sessionId);
+                    if (!inserted && response.stopReason !== "cancelled" && isSideChatResponse(response)) {
+                        // A side chat's message lands in its own forked thread, never in this
+                        // session's history: the side turn's completion is its insertion. Its
+                        // running/idle pair frames the prompt for the client; the idle would
+                        // otherwise be dropped as a repeat of the previous turn's.
+                        await startWork();
+                        resolve({messageId});
+                        await sendIdle(response);
+                        return;
+                    }
                     if (!inserted) {
                         const notInsertedMessage = "The prompt ended before Codex recorded the user message";
                         // A `cancelled` v1 stop reason means the adopted turn was interrupted
@@ -6269,13 +6279,21 @@ async function* withCommandIds(
     }
 }
 
+/** Whether a finished prompt ran as a side chat (its response carries the side chat's scope). */
+function isSideChatResponse(response: acp.PromptResponse): boolean {
+    const meta = response._meta as {codex?: {sideChat?: unknown}} | null | undefined;
+    return meta?.codex?.sideChat !== undefined;
+}
+
 /**
  * Whether a v2 prompt may join the running turn through `turn/steer`. Only ordinary text
  * steers: a slash command or a `$skill` waits for its own execution slot (docs/steering.md),
- * where its handling wraps or replaces the prompt.
+ * where its handling wraps or replaces the prompt, and a side chat must fork, not join the
+ * parent turn.
  */
 function canSteerV2Prompt(request: acp.PromptRequest, promptKind: PromptKind): boolean {
     if (promptKind.kind !== "prompt" || parsePromptCommand(request.prompt) !== null) return false;
+    if (parseSideChatPrompt(request, null) !== null) return false;
     const first = request.prompt[0];
     return first?.type !== "text" || !first.text.trim().startsWith("$");
 }

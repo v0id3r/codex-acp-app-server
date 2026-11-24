@@ -2,7 +2,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {ResponseError} from 'vscode-jsonrpc';
 import {SESSION_STEERING_METHOD} from '../../AcpExtensions';
 import {
-    sessionId, connectSession, userMessageItem, itemStarted, itemCompleted,
+    sessionId, connectSession, createThread, createTurn, userMessageItem, itemStarted, itemCompleted,
     turnStarted, turnCompleted, turnFinished, settle, stateUpdates,
     type PromptSession,
 } from './v2-prompt-harness';
@@ -303,4 +303,68 @@ describe('commands during a running v2 turn', () => {
         expect(steers).toHaveLength(0);
     });
 
+    it('queues /init behind the running turn instead of steering it', async () => {
+        await connectBusy();
+        const response = client.sendPrompt([{type: 'text', text: '/init'}]);
+        await settle();
+        expect(steers).toHaveLength(0);
+        expect(client.turnStartParams).toHaveLength(1);
+        // /init runs its own turn with the command's replacement prompt.
+        client.emit(turnCompleted());
+        await client.promptRunFinished();
+        await vi.waitFor(() => expect(client.turnStartParams).toHaveLength(2));
+        const input = JSON.stringify(client.turnStartParams[1]);
+        expect(input).toContain('AGENTS.md');
+        expect(input).not.toContain('/init');
+        const messageId = client.turnStartParams[1]!['clientUserMessageId'] as string;
+        client.emit(turnStarted('turn-2'));
+        client.emit(itemCompleted(userMessageItem(messageId), 'turn-2'));
+        expect(await response).toEqual({messageId});
+        client.emit(turnCompleted('turn-2'));
+        await client.promptRunFinished(1);
+        await settle();
+        expect(steers).toHaveLength(0);
+    });
+
+    it('queues /btw behind the running turn and forks a side chat instead of steering it', async () => {
+        await connectBusy({
+            'thread/start': async () => ({
+                thread: {...createThread(), path: '/tmp/thread.jsonl'},
+                model: 'gpt-5', modelProvider: 'openai', reasoningEffort: 'medium',
+                serviceTier: null, turnsBackwardsCursor: null,
+            }),
+            'thread/fork': async () => ({
+                thread: {...createThread(), id: 'side-thread', path: '/tmp/side.jsonl'},
+                model: 'gpt-5', modelProvider: 'openai', reasoningEffort: 'medium',
+            }),
+        });
+        const response = client.sendPrompt([{type: 'text', text: '/btw isolated question'}]);
+        await settle();
+        expect(steers).toHaveLength(0);
+        expect(client.turnStartParams).toHaveLength(1);
+        client.emit(turnCompleted());
+        await client.promptRunFinished();
+        await vi.waitFor(() => expect(client.turnStartParams).toHaveLength(2));
+        expect(client.turnStartParams[1]!['threadId']).toBe('side-thread');
+        const sideTurn = (method: string, status: 'inProgress' | 'completed') => client.emit(
+            method === 'turn/started'
+                ? {method, params: {threadId: 'side-thread', turn: createTurn(status, 'turn-2')}} as never
+                : {method, params: {threadId: 'side-thread', turn: createTurn(status, 'turn-2')}} as never,
+        );
+        sideTurn('turn/started', 'inProgress');
+        const sideMessageId = client.turnStartParams[1]!['clientUserMessageId'] as string;
+        client.emit({
+            method: 'item/completed',
+            params: {threadId: 'side-thread', turnId: 'turn-2', item: userMessageItem(sideMessageId, 'isolated question'), completedAtMs: 0},
+        } as never);
+        sideTurn('turn/completed', 'completed');
+        expect(await response).toEqual({messageId: expect.any(String)});
+        await settle();
+        expect(steers).toHaveLength(0);
+        // The parent turn's idle, then the side prompt's own: its turn in the client ends.
+        const idles = client.transcript.filter(entry => 'sessionUpdate' in entry
+            && entry.sessionUpdate.sessionUpdate === 'state_update'
+            && (entry.sessionUpdate as {state: string}).state === 'idle');
+        expect(idles).toHaveLength(2);
+    });
 });
