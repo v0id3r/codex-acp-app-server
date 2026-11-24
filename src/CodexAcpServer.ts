@@ -4792,7 +4792,7 @@ export class CodexAcpServer {
      * Joins a v2 prompt to the session's running turn through Codex `turn/steer`, like v1's
      * steering. The `{messageId}` answer follows the steer's insertion (v2's insertion
      * boundary); the prompt that owns the turn reports its idle. Returns null when there is
-     * no steerable turn to join, the prompt must start its own turn (commands, side chats,
+     * no owned turn to join, the prompt must start its own turn (commands, side chats,
      * keyed retries), or Codex refused the steer -- the caller then queues the prompt.
      */
     private async steerPromptV2(
@@ -4802,10 +4802,7 @@ export class CodexAcpServer {
         keyed: boolean,
     ): Promise<acpV2.PromptResponse | null> {
         const {sessionId} = request;
-        // A turn the agent started itself has no active prompt; getSteerableTurnId
-        // decides whether it can take the steer.
-        const activePrompt = this.activePrompts.get(sessionId);
-        if (keyed || activePrompt !== undefined && !activePrompt.steerable) {
+        if (keyed || this.activePrompts.get(sessionId)?.steerable !== true) {
             return null;
         }
         const promptCommand = parsePromptCommand(request.prompt);
