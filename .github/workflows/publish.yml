@@ -144,10 +144,10 @@ jobs:
         with:
           name: Codex ACP ${{ github.ref_name }}
           body: |
-            Codex ACP 2.8.0 with Codex CLI 0.170.0.
+            Codex ACP 2.11.0 with Codex CLI 0.171.0.
 
             Preserves Jaz side conversations, exact provider metadata, native steering, usage accounting, and OAuth credentials.
 
-            Adds ACP v2: native turn/steer for mid-turn prompts, interim/final message phase, typed failures with retry hints, and detached background terminals in state updates.
+            ACP v2: upstream native turn/steer for mid-turn prompts (slash commands and skills keep their own slot), interim/final message phase, typed failures with retry hints, detached background terminals in state updates, and a stop reason on client-stopped background terminals.
           generate_release_notes: false
           files: dist/release/*.tar.gz
