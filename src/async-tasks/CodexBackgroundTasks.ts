@@ -237,7 +237,7 @@ export class CodexBackgroundTasks {
     private async stopTask(task: Task, verifyLive = false): Promise<boolean> {
         if (!this.canQueryAppServer()) return false;
         if (!verifyLive && task.state === "stopped" && !task.terminalPublished) {
-            await this.finish(task, "stopped");
+            await this.finish(task, "stopped", "stopped");
             return true;
         }
         if (task.state !== "running") return false;
@@ -252,6 +252,8 @@ export class CodexBackgroundTasks {
                 if (snapshot === null || task.state !== "stopping" || this.tasks.get(task.asyncTaskId) !== task) return false;
                 if (task.processId !== processId) return false;
                 if (!snapshot.terminals.some(entry => entry.itemId === task.itemId && entry.processId === processId)) {
+                    // The process ended on its own before the stop reached it:
+                    // its end is unreported, not a stop.
                     await this.finish(task, "stopped");
                     return false;
                 }
@@ -266,7 +268,7 @@ export class CodexBackgroundTasks {
                 if (task.standardPublished) await this.reconcile(task.threadId, task.sessionId, false);
                 return false;
             }
-            await this.finish(task, "stopped");
+            await this.finish(task, "stopped", "stopped");
             return true;
         } finally {
             if (task.state === "stopping") task.state = "running";
@@ -472,7 +474,7 @@ export class CodexBackgroundTasks {
         return task;
     }
 
-    private async finish(task: Task, state: TerminalState): Promise<void> {
+    private async finish(task: Task, state: TerminalState, reason?: "stopped"): Promise<void> {
         if (task.state === "running" || task.state === "stopping") {
             task.state = state;
         } else if (task.state !== state) {
@@ -484,7 +486,11 @@ export class CodexBackgroundTasks {
             const view = this.session.forSession(task.sessionId);
             await view.updateTerminal({
                 terminalId: task.itemId,
-                ...(task.reportedExit ? {} : {exitStatus: {exitCode: null, signal: null}}),
+                ...(task.reportedExit ? {} : {exitStatus: {
+                    exitCode: null,
+                    signal: null,
+                    ...(reason !== undefined ? {_meta: {codex: {reason}}} : {}),
+                }}),
                 capabilities: null,
             });
             task.standardPublished = false;

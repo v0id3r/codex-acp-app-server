@@ -97,6 +97,8 @@ describe('background terminal controls on ACP v2', () => {
         expect(result).toEqual(method === "terminal/cancel" ? {} : {stopped: true});
         await client.waitForNotifications();
         const exited = updates().findIndex(update => update.sessionUpdate === "terminal_update" && update["exitStatus"] != null);
+        // The stop is the reported end: the exit names its reason, and no invented code.
+        expect(updates()[exited]).toMatchObject({exitStatus: {exitCode: null, signal: null, _meta: {codex: {reason: "stopped"}}}});
         const removed = updates().findIndex((update, index) => index > listed && update.sessionUpdate === "state_update"
             && JSON.stringify(update["background"]) === "[]");
         expect(exited).toBeGreaterThan(listed);
