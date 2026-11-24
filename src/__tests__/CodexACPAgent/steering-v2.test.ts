@@ -130,6 +130,27 @@ describe('_session/steering over ACP v2', () => {
         expect(stateUpdates(client.transcript)).toEqual([{state: "running"}, {state: "idle", stopReason: "end_turn"}]);
     });
 
+    it('steers a session/prompt that arrives during an agent-initiated turn into that turn', async () => {
+        const client = await connectSession();
+        closeClient = () => client.connection.close();
+        const steerClientId = captureSteerClientId(client);
+
+        // A turn Codex started itself: no session/prompt owns it.
+        client.emit(turnStarted());
+        await settle();
+
+        const steeredResponse = client.sendPrompt([{type: "text", text: "also do this"}]);
+        await vi.waitFor(() => steerClientId.captured());
+        client.emit(itemStarted(userMessageItem(steerClientId.captured(), "also do this")));
+        const steered = await steeredResponse;
+        expect(steered).toEqual({messageId: steerClientId.captured()});
+        expect(client.turnStartParams).toHaveLength(0);
+
+        client.emit(turnCompleted());
+        await settle();
+        expect(stateUpdates(client.transcript)).toEqual([{state: "running"}, {state: "idle", stopReason: "end_turn"}]);
+    });
+
     it('queues a session/prompt whose steer Codex refuses because the turn just ended', async () => {
         const client = await connectSession();
         closeClient = () => client.connection.close();
