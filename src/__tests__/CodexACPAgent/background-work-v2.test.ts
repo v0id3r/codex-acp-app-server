@@ -81,6 +81,19 @@ describe("ACP v2 background work", () => {
         await expect(stop()).rejects.toMatchObject({code: -32602});
     });
 
+    it("discovers a detached process that never reported a process ID", async () => {
+        h = await connectSession();
+        h.setCodexResponse("thread/backgroundTerminals/list", async () => ({data: [terminal], nextCursor: null}));
+        h.emit(turnStarted());
+        h.emit(itemStarted(commandExecutionItem(terminal.itemId)));
+        await flush();
+        expect(list()).toEqual([]);
+
+        h.emit(turnCompleted());
+        await flush();
+        expect(lastState()).toMatchObject({state: "idle", background: [terminalItem]});
+    });
+
     it("rejects a stale terminal ID without stopping a process that reused its handle", async () => {
         h = await connectSession();
         const terminate = vi.fn(async () => ({terminated: true}));

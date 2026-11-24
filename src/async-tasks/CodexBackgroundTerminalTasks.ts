@@ -92,7 +92,7 @@ export class CodexBackgroundTerminalTasks {
         // The list includes processes still serving their initial tool call. At a turn boundary
         // a surviving process is known to be detached. Publish its terminal before reporting idle.
         if (this.reportsStandard(sessionId) && notification.method === "turn/completed"
-            && notification.params.turn.status !== "inProgress" && this.hasRunningTask(threadId)) {
+            && notification.params.turn.status !== "inProgress") {
             await this.reconcile(threadId, sessionId);
         } else if (this.enabled && (notification.method === "turn/completed"
             || (notification.method === "item/started" && this.hasRunningTask(threadId)))) {
