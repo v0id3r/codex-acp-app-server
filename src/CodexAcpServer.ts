@@ -3746,14 +3746,16 @@ export class CodexAcpServer {
             // Local selections survive while a model temporarily hides their picker.
             const selections: acp.InitialSessionConfigOption[] = [
                 {configId: MODEL_CONFIG_ID, value: model},
-                {configId: REASONING_EFFORT_CONFIG_ID, value: effort},
                 {configId: FAST_MODE_CONFIG_ID, type: "boolean", value: previous.fastModeEnabled},
                 {configId: MODE_CONFIG_ID, value: previous.agentMode.id},
             ];
+            if (effort !== null) {
+                selections.push({configId: REASONING_EFFORT_CONFIG_ID, value: effort});
+            }
             for (const entry of selections) {
                 if (!previous.localConfigOverrides.has(entry.configId)) continue;
                 try {
-                    this.changeLocalConfigOption(state, entry, effort);
+                    this.changeLocalConfigOption(state, entry, effort ?? undefined);
                 } catch (error) {
                     // The new workspace or model catalog may no longer offer this choice.
                     if (!(error instanceof RequestError && error.code === -32602)) throw error;

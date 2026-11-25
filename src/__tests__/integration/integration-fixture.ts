@@ -9,7 +9,7 @@ import {createSpawnedAgentFixture, type SpawnedAgentFixture} from "../CodexACPAg
 import type {MockResponsesServer} from "./mock-responses-server";
 
 // gpt-5.5 exposes exec_command/apply_patch directly; newer bundled models wrap tools in code-mode `exec`.
-export const INTEGRATION_MODEL_ID = ModelId.create("gpt-5.5", "low");
+export const INTEGRATION_MODEL_ID: ModelId & { effort: string } = ModelId.create("gpt-5.5", "low") as ModelId & { effort: string };
 
 const DEFAULT_INTEGRATION_TIMEOUT_MS = 30_000;
 
