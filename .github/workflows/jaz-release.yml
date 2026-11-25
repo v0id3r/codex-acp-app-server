@@ -2,6 +2,15 @@ name: Jaz Release
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag, created at the dispatched commit
+        required: true
+        type: string
+      skip_darwin:
+        description: Leave out the macOS archives
+        type: boolean
+        default: false
   push:
     tags:
       - "v*-jaz.*"
@@ -64,6 +73,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        exclude: ${{ fromJSON(inputs.skip_darwin && '[{"platform":"darwin-arm64"},{"platform":"darwin-x64"}]' || '[]') }}
         include:
           - runner: macos-15
             platform: darwin-arm64
@@ -142,7 +152,9 @@ jobs:
           merge-multiple: true
       - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228
         with:
-          name: Codex ACP ${{ github.ref_name }}
+          name: Codex ACP ${{ inputs.tag || github.ref_name }}
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          target_commitish: ${{ github.sha }}
           body: |
             Upstream codex-acp 2.11.0 with Codex CLI 0.171.0, packaged as a standalone archive per platform.
 
