@@ -258,3 +258,49 @@ describe('native v2 prompt steering', () => {
         await client.promptRunFinished();
     });
 });
+
+describe('commands during a running v2 turn', () => {
+    let client: PromptSession;
+    let steers: SteerParams[];
+
+    afterEach(() => {
+        client?.connection.close();
+        vi.clearAllMocks();
+        expectConformingV2SessionUpdates();
+    });
+
+    async function connectBusy(codexResponses?: Record<string, (params: unknown) => Promise<unknown>>): Promise<void> {
+        client = await connectSession(2, codexResponses ? {codexResponses} : {});
+        steers = [];
+        client.setCodexResponse('turn/steer', async params => {
+            steers.push(params as SteerParams);
+            return {};
+        });
+        await startPrompt(client);
+    }
+
+    /** Ends the running turn, then the command's own turn that follows it. */
+    async function finishOwnTurn(response: Promise<any>, text: string): Promise<void> {
+        client.emit(turnCompleted());
+        await client.promptRunFinished();
+        await vi.waitFor(() => expect(client.turnStartParams).toHaveLength(2));
+        const messageId = client.turnStartParams[1]!['clientUserMessageId'] as string;
+        client.emit(turnStarted('turn-2'));
+        client.emit(itemCompleted(userMessageItem(messageId, text), 'turn-2'));
+        expect(await response).toEqual({messageId});
+        client.emit(turnCompleted('turn-2'));
+        await client.promptRunFinished(1);
+        await settle();
+    }
+
+    it('queues a $skill prompt behind the running turn instead of steering it', async () => {
+        await connectBusy();
+        const response = client.sendPrompt([{type: 'text', text: '$review-code check the diff'}]);
+        await settle();
+        expect(steers).toHaveLength(0);
+        expect(client.turnStartParams).toHaveLength(1);
+        await finishOwnTurn(response, '$review-code check the diff');
+        expect(steers).toHaveLength(0);
+    });
+
+});
